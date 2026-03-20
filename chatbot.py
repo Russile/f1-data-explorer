@@ -265,45 +265,64 @@ def get_lap_times(year: int, grand_prix: str, drivers: list[str]) -> dict:
         return {"type": "error", "message": str(e)}
 
 
-def get_speed_telemetry(year: int, grand_prix: str, driver1: str, driver2: str) -> dict:
-    """Get speed vs distance telemetry comparison for two drivers on their fastest laps.
+def get_speed_telemetry(year: int, grand_prix: str, drivers: str) -> dict:
+    """Get speed vs distance telemetry comparison for drivers on their fastest laps.
 
     Args:
         year: The season year (e.g. 2024).
         grand_prix: Name of the Grand Prix.
-        driver1: First driver abbreviation (e.g. 'VER').
-        driver2: Second driver abbreviation (e.g. 'HAM').
+        drivers: Comma-separated driver abbreviations (e.g. 'VER,HAM' or 'LEC,HAM,RUS').
 
     Returns:
         A dict with 'type' set to 'chart' and telemetry chart data.
     """
     try:
+        driver_list = [d.strip().upper() for d in drivers.split(",") if d.strip()]
+        if len(driver_list) < 2:
+            return {"type": "error", "message": "Please provide at least 2 drivers separated by commas."}
+            
         session = fastf1.get_session(year, grand_prix, "R")
         session.load()
         laps = session.laps
-        d1_lap = laps.pick_drivers(driver1).pick_fastest()
-        d2_lap = laps.pick_drivers(driver2).pick_fastest()
-        d1_tel = d1_lap.get_telemetry()
-        d2_tel = d2_lap.get_telemetry()
         
-        t1 = d1_lap["Team"] if "Team" in d1_lap else "Unknown"
-        t2 = d2_lap["Team"] if "Team" in d2_lap else "Unknown"
-        c1 = get_team_color(t1)
-        c2 = get_team_color(t2)
+        line_styles = ["solid", "dash", "dot", "dashdot"]
+        color_usage = {}  # track how many times each color has been used
         
-        ls1, ls2 = "solid", "solid"
-        if c1 == c2:
-            ls2 = "dash"
-            
         data = []
-        for _, row in d1_tel.iterrows():
-            data.append({"Driver": driver1, "Distance": float(row["Distance"]), "Speed": float(row["Speed"]), "Team": t1, "Color": c1, "LineStyle": ls1})
-        for _, row in d2_tel.iterrows():
-            data.append({"Driver": driver2, "Distance": float(row["Distance"]), "Speed": float(row["Speed"]), "Team": t2, "Color": c2, "LineStyle": ls2})
+        driver_labels = []
+        for drv in driver_list:
+            try:
+                drv_lap = laps.pick_drivers(drv).pick_fastest()
+                drv_tel = drv_lap.get_telemetry()
+                team = drv_lap["Team"] if "Team" in drv_lap else "Unknown"
+                color = get_team_color(team)
+                
+                # Assign line style based on color overlap
+                count = color_usage.get(color, 0)
+                ls = line_styles[count % len(line_styles)]
+                color_usage[color] = count + 1
+                
+                for _, row in drv_tel.iterrows():
+                    data.append({
+                        "Driver": drv,
+                        "Distance": float(row["Distance"]),
+                        "Speed": float(row["Speed"]),
+                        "Team": team,
+                        "Color": color,
+                        "LineStyle": ls,
+                    })
+                driver_labels.append(drv)
+            except Exception:
+                pass  # Skip drivers with no data
+                
+        if not data:
+            return {"type": "error", "message": "No telemetry data found for the specified drivers."}
+            
+        title_drivers = " vs ".join(driver_labels)
         return {
             "type": "chart",
             "chart_type": "line",
-            "title": f"{year} {grand_prix} — Speed Trace: {driver1} vs {driver2}",
+            "title": f"{year} {grand_prix} — Speed Trace: {title_drivers}",
             "data": data,
             "x": "Distance",
             "y": "Speed",
