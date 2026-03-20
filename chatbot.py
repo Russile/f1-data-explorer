@@ -265,18 +265,26 @@ def get_lap_times(year: int, grand_prix: str, drivers: list[str]) -> dict:
         return {"type": "error", "message": str(e)}
 
 
-def get_speed_telemetry(year: int, grand_prix: str, drivers: str) -> dict:
+def get_speed_telemetry(year: int, grand_prix: str, drivers: str = "", driver1: str = "", driver2: str = "") -> dict:
     """Get speed vs distance telemetry comparison for drivers on their fastest laps.
 
     Args:
         year: The season year (e.g. 2024).
         grand_prix: Name of the Grand Prix.
         drivers: Comma-separated driver abbreviations (e.g. 'VER,HAM' or 'LEC,HAM,RUS').
+        driver1: (Legacy) First driver abbreviation. Use 'drivers' instead.
+        driver2: (Legacy) Second driver abbreviation. Use 'drivers' instead.
 
     Returns:
         A dict with 'type' set to 'chart' and telemetry chart data.
     """
     try:
+        # Backward compatibility: merge driver1/driver2 into drivers string
+        if not drivers and driver1:
+            drivers = driver1
+            if driver2:
+                drivers += f",{driver2}"
+        
         driver_list = [d.strip().upper() for d in drivers.split(",") if d.strip()]
         if len(driver_list) < 2:
             return {"type": "error", "message": "Please provide at least 2 drivers separated by commas."}
@@ -836,7 +844,9 @@ def render_result(result: dict, user_prompt: str = "", key_prefix: str = ""):
         fig.update_layout(template="plotly_dark")
         
         # Strip out any ", solid" or ", dash" tags from the legend names
-        fig.for_each_trace(lambda t: t.update(name=t.name.split(",")[0] if t.name else t.name))
+        fig.for_each_trace(lambda t: t.update(name=t.name.split(",")[0].strip() if t.name else t.name))
+        # Remove the "Driver, LineStyle" legend group title
+        fig.update_layout(legend_title_text="")
         
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_chart")
 
@@ -865,19 +875,45 @@ def get_gemini_client(api_key: str):
     return genai.Client(api_key=api_key)
 
 
+# Model fallback chain — ordered by preference (fastest/cheapest first)
+MODEL_CHAIN = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+]
+
+
 def chat_with_gemini(client, messages: list, tools: list, tool_config=None):
-    """Send messages to Gemini and handle function calling loop."""
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
-        contents=messages,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.2,
-            tools=tools,
-            tool_config=tool_config,
-        ),
-    )
-    return response
+    """Send messages to Gemini with automatic model fallback on rate limits."""
+    import time
+    
+    last_error = None
+    for model_name in MODEL_CHAIN:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.2,
+                    tools=tools,
+                    tool_config=tool_config,
+                ),
+            )
+            # Track which model answered (for sidebar display)
+            st.session_state["_active_model"] = model_name
+            return response
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(k in error_str for k in ["429", "rate", "quota", "resource", "exhausted", "404", "not_found", "not found", "unavailable"]):
+                last_error = e
+                time.sleep(1)  # Brief pause before trying next model
+                continue
+            else:
+                raise  # Non-rate-limit errors should propagate immediately
+    
+    # All models exhausted
+    raise last_error or Exception("All models rate-limited. Please wait a moment and try again.")
 
 
 # ─────────────────────────────────────────────
@@ -921,6 +957,11 @@ def main():
             st.success("API key set ✓")
         else:
             st.warning("Enter your Gemini API key to start chatting.")
+        
+        # Show active model
+        active_model = st.session_state.get("_active_model", MODEL_CHAIN[0])
+        friendly_name = active_model.replace("-preview", "").replace("gemini-", "Gemini ").title()
+        st.caption(f"🤖 Model: {friendly_name}")
 
         st.divider()
         st.markdown("### 💡 Try asking:")
@@ -961,7 +1002,15 @@ def main():
             st.markdown(prompt)
 
         # Check if user is asking for data to force the Lite model to use a tool
-        is_data_request = any(w in prompt.lower() for w in ["graph", "chart", "plot", "table", "telemetry", "laps", "who", "what", "when", "results", "fastest", "standings", "schedule", "compare", "position"])
+        is_data_request = any(w in prompt.lower() for w in [
+            "graph", "chart", "plot", "table", "telemetry", "laps", "lap",
+            "who", "what", "when", "how", "show", "give", "provide", "list",
+            "results", "fastest", "standings", "schedule", "compare", "comparison",
+            "position", "speed", "data", "time", "won", "win", "race", "driver",
+            "team", "season", "grid", "qualifying", "constructor", "championship",
+            "delta", "gap", "sector", "stint", "pit", "tyre", "tire",
+            "pre-season", "preseason", "testing", "career",
+        ])
 
         # Build the tools list from our functions
         tool_functions = [
