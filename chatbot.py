@@ -668,6 +668,56 @@ def get_lap_positions(year: int, grand_prix: str) -> dict:
     except Exception as e:
         return {"type": "error", "message": str(e)}
 
+def get_driver_career_wins(driver_last_name: str) -> dict:
+    """Get a list of every race a driver has won across their entire F1 career.
+
+    Args:
+        driver_last_name: The driver's last name (e.g. 'norris', 'verstappen'). DO NOT use 3-letter codes.
+
+    Returns:
+        A dict with 'type' set to 'table' containing their historical race wins.
+    """
+    try:
+        from fastf1.ergast import Ergast
+        ergast = Ergast()
+        # Ergast requires the driver ID or last name
+        wins_data = []
+        offset = 0
+        limit = 100
+        
+        while True:
+            res = ergast.get_race_results(driver=driver_last_name, limit=limit, offset=offset)
+            if not res.content:
+                break
+                
+            for i, df in enumerate(res.content):
+                if "position" in df.columns and not df.empty:
+                    # Ergast returns position as an integer for race results
+                    if df.iloc[0]["position"] == 1:
+                        desc = res.description.iloc[i]
+                        wins_data.append({
+                            "Season": str(desc["season"]),
+                            "Round": str(desc["round"]),
+                            "Race": desc["raceName"],
+                            "Constructor": df.iloc[0].get("constructorName", "Unknown")
+                        })
+                        
+            if len(res.content) < limit:
+                break
+            offset += limit
+            
+        wins_data.sort(key=lambda x: (int(x["Season"]), int(x["Round"])))
+        for w in wins_data:
+            del w["Round"] # Clean up for UI
+            
+        return {
+            "type": "table",
+            "title": f"Career Wins for {driver_last_name.upper()}",
+            "data": wins_data
+        }
+    except Exception as e:
+        return {"type": "error", "message": str(e)}
+
 
 # ─────────────────────────────────────────────
 # FUNCTION REGISTRY — maps names to callables
@@ -688,6 +738,7 @@ FUNC_MAP = {
     "get_season_driver_stats_chart": get_season_driver_stats_chart,
     "get_preseason_testing_summary": get_preseason_testing_summary,
     "get_lap_positions": get_lap_positions,
+    "get_driver_career_wins": get_driver_career_wins,
 }
 
 
@@ -780,6 +831,7 @@ SYSTEM_PROMPT = """You are an expert Formula 1 data analyst chatbot. You help us
 RULES:
 - When a user asks about F1 data, YOU MUST call the appropriate function(s) to retrieve it. Do not rely on internal knowledge for stats.
 - If the user asks a general F1 knowledge question (not needing data lookup), answer directly.
+- Multi-year career queries (e.g. "every race he won in his career"): You MUST use the `get_driver_career_wins` tool. DO NOT hallucinate historical career data or guess from internal knowledge.
 - For driver names, use the standard 3-letter abbreviations (VER, HAM, NOR, LEC, PIA, SAI, RUS, etc.).
 - If the user mentions a driver's full name, convert it to the abbreviation.
 - Grand Prix names should be the common short name (e.g. 'Monaco', 'Silverstone').
@@ -908,6 +960,7 @@ def main():
             get_season_driver_stats_chart,
             get_preseason_testing_summary,
             get_lap_positions,
+            get_driver_career_wins,
         ]
 
         # Build Gemini conversation history
