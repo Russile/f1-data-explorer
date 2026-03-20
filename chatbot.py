@@ -839,9 +839,13 @@ def main():
         api_key = st.text_input(
             "Gemini API Key",
             type="password",
-            value=os.environ.get("GEMINI_API_KEY", ""),
             help="Get a free key at https://aistudio.google.com",
         )
+        
+        # Fallback to environment variable if one exists (keeps it out of the UI element defaults!)
+        if not api_key:
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+
         if api_key:
             st.success("API key set ✓")
         else:
