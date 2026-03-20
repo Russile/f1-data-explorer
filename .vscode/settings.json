@@ -1,0 +1,12 @@
+{
+    "python.defaultInterpreterPath": "/Users/jellybeam/Documents/F1/.venv/bin/python",
+    "python.analysis.extraPaths": [
+        "/Users/jellybeam/Documents/F1/.venv/lib/python3.12/site-packages"
+    ],
+    "python.terminal.activateEnvironment": true,
+    "python.venvPath": "/Users/jellybeam/Documents/F1",
+    "python.venvFolders": [
+        ".venv"
+    ],
+    "python.languageServer": "Pylance"
+}

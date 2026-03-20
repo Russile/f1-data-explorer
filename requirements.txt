@@ -1,0 +1,6 @@
+fastf1
+streamlit
+pandas
+plotly
+google-genai
+python-dotenv
